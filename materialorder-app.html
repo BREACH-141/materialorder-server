@@ -1,0 +1,1724 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>MaterialOrder — Builder Procurement</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Inter:wght@400;500;600;700;800&display=swap');
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; }
+  :root { --font-mono: 'JetBrains Mono', monospace; --font-sans: 'Inter', sans-serif; }
+  button { font-family: inherit; }
+  input, select, textarea { font-family: inherit; }
+  input:focus, select:focus, textarea:focus, button:focus { outline: 2px solid #D4622A; outline-offset: 1px; }
+  a { cursor: pointer; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
+<script type="text/babel">
+const { useState, useMemo } = React;
+
+// Where the MaterialOrder backend (server/index.js) is reachable. Change this
+// to your deployed server's URL once it's hosted somewhere reachable from the
+// browser. Stock-check emails will not send while this points at localhost
+// and the app is opened as a static file, since localhost only resolves on
+// the machine actually running the server.
+const API_BASE_URL = "https://materialorder-server.onrender.com";
+
+const ORANGE = "#D4622A";
+const CHARCOAL = "#1C1F1D";
+const CREAM = "#F5F2EC";
+const GREEN = "#2D5C4D";
+const AGGREGATE = "#8A8579";
+const CARD = "#EFEAE0";
+
+const PROPERTY_TYPES = [
+  { id: "new-build-house", label: "New build — house", icon: "home" },
+  { id: "extension", label: "Extension", icon: "plus" },
+  { id: "loft-conversion", label: "Loft conversion", icon: "stairs" },
+  { id: "renovation", label: "Full renovation", icon: "tools" },
+  { id: "garage-outbuilding", label: "Garage / outbuilding", icon: "garage" },
+  { id: "commercial", label: "Commercial unit", icon: "building" },
+];
+
+const STAGE_MATERIALS = {
+  foundation: ["Ready-mix concrete", "Rebar (reinforcement steel)", "DPM (damp proof membrane)", "Hardcore / type 1 sub-base", "Formwork timber"],
+  structure: ["Timber studwork / joists", "Structural steel beams", "Bricks", "Blocks (aircrete/dense)", "Cement", "Sand (building/sharp)", "Wall ties", "Lintels"],
+  roofing: ["Roof trusses", "Roofing felt/membrane", "Roof tiles or slates", "Battens", "Flashing", "Guttering & downpipes", "Insulation (loft)"],
+  windows_doors: ["Windows (uPVC/timber/alu)", "External doors", "Internal doors", "Door/window lintels"],
+  first_fix: ["Insulation (cavity/floor)", "Plasterboard", "Timber for stud walls", "Electrical cable & back boxes", "Plumbing pipework"],
+  second_fix: ["Skirting & architrave", "Internal doors & ironmongery", "Sockets & switches", "Sanitaryware", "Kitchen units"],
+  finishing: ["Plaster/skim", "Paint & primer", "Flooring (tiles/laminate/carpet)", "Sealant & adhesives", "External render/cladding"],
+};
+
+const ALL_STAGE_IDS = Object.keys(STAGE_MATERIALS);
+
+const SCALE_MULTIPLIER = { small: 0.6, medium: 1, large: 1.8, "extra-large": 2.8 };
+
+// Real London builders' merchants, pulled from Google Places. Ratings, addresses
+// and phone numbers are live; pricing/lead-time below is still estimated since
+// merchants don't publish live price feeds, so treat £ figures as a starting point
+// to call and confirm rather than a locked quote.
+const SUPPLIERS = [
+  { name: "London Builders Merchants Ltd", address: "45-47 Tower Bridge Rd, London SE1 4TL", phone: "+44 20 7403 3480", email: "", reliability: 4.7, speed: "fast", priceIndex: 0.95, color: "c-blue", category: "general" },
+  { name: "Upton Park Builders Merchants", address: "434-436 Green St, London E13 9DB", phone: "+44 20 8552 1060", email: "", reliability: 4.5, speed: "fast", priceIndex: 0.9, color: "c-green", category: "general" },
+  { name: "C&S Builders Merchants", address: "122-126 Grove Green Rd, London E11 4EL", phone: "+44 20 8539 2391", email: "Sales@csbuildersmerchants.co.uk", reliability: 4.3, speed: "standard", priceIndex: 0.88, color: "c-amber", category: "general" },
+  { name: "East London Builders Merchant", address: "82 Katherine Rd, London E6 1EN", phone: "+44 20 8470 3898", email: "", reliability: 4.7, speed: "standard", priceIndex: 0.93, color: "c-teal", category: "general" },
+  { name: "Kenrix Builders Merchants", address: "27 Wickham Ln, London SE2 0XJ", phone: "+44 20 8311 2831", email: "infokenrix@gmail.com", reliability: 4.7, speed: "fast", priceIndex: 0.9, color: "c-purple", category: "general" },
+  { name: "IBB Builders Merchants", address: "18 Gorst Rd, London NW10 6LE", phone: "+44 20 8965 7972", email: "sales@ibb.uk", reliability: 4.7, speed: "standard", priceIndex: 0.97, color: "c-coral", category: "general" },
+  { name: "Selco Builders Warehouse", address: "W Gate, Hanger Ln, London W5 1UL", phone: "+44 20 8998 9890", email: "", reliability: 4.2, speed: "fast", priceIndex: 1.0, color: "c-amber", category: "general" },
+  { name: "Materials Market", address: "55 Charlotte Rd, London EC2A 3QF", phone: "+44 20 7459 4574", email: "theteam@materialsmarket.com", reliability: 4.1, speed: "fast", priceIndex: 0.85, color: "c-pink", category: "general" },
+  { name: "Builder Depot, Staples Corner", address: "383A Edgware Rd, London NW2 6LD", phone: "+44 20 8208 8510", email: "info@builderdepot.co.uk", reliability: 4.4, speed: "fast", priceIndex: 0.92, color: "c-blue", category: "general" },
+  { name: "Thames Building Supplies", address: "Lugg Approach, London E12 5LN", phone: "+44 20 8550 1178", email: "info@thamesbuildingsupplies.co.uk", reliability: 4.3, speed: "standard", priceIndex: 0.94, color: "c-green", category: "general" },
+  { name: "K & H Timber London", address: "460 Lea Bridge Rd, London E10 7DU", phone: "+44 20 8539 6137", email: "", reliability: 4.9, speed: "standard", priceIndex: 0.96, color: "c-purple", category: "timber" },
+  { name: "Park Royal Timbers Ltd", address: "20a Sunbeam Rd, London NW10 6JL", phone: "+44 20 8838 0455", email: "info@parkroyaltimbers.com", reliability: 4.6, speed: "standard", priceIndex: 0.93, color: "c-purple", category: "timber" },
+  { name: "Howarth Timber & Building Supplies", address: "Brockley Cross, London SE4 2LY", phone: "+44 20 8691 6237", email: "online.london@howarth-timber.co.uk", reliability: 4.0, speed: "standard", priceIndex: 1.0, color: "c-purple", category: "timber" },
+  { name: "Chambers Timber Merchants", address: "397 Romford Rd, London E7 8AB", phone: "+44 20 8534 6318", email: "sales@chamberstimber.com", reliability: 4.9, speed: "fast", priceIndex: 0.94, color: "c-purple", category: "timber" },
+  { name: "City Spark", address: "94 Hamlets Way, Bow, London E3 4SY", phone: "+44 20 7018 9347", email: "", reliability: 4.8, speed: "fast", priceIndex: 0.91, color: "c-coral", category: "plumbing_electrical" },
+  { name: "London Plumbing Supplies", address: "186-192 Chingford Mount Rd, London E4 9BS", phone: "+44 20 3802 3275", email: "", reliability: 4.9, speed: "standard", priceIndex: 0.95, color: "c-coral", category: "plumbing_electrical" },
+  { name: "Action Building & Electrical Supplies", address: "187-189 Dawes Rd, London SW6 7QP", phone: "+44 20 7385 2462", email: "info@actiongroup.co.uk", reliability: 5.0, speed: "standard", priceIndex: 0.97, color: "c-coral", category: "plumbing_electrical" },
+];
+
+const TIMBER_HINTS = ["timber", "joist", "stud", "truss", "skirting", "architrave", "batten", "plywood", "mdf"];
+const PLUMBING_ELECTRICAL_HINTS = ["pipework", "cable", "electrical", "sanitaryware", "socket", "switch", "plumbing"];
+
+function suppliersForMaterial(materialName) {
+  const lower = materialName.toLowerCase();
+  const isTimber = TIMBER_HINTS.some((h) => lower.includes(h));
+  const isPlumbElec = PLUMBING_ELECTRICAL_HINTS.some((h) => lower.includes(h));
+  if (isTimber) return SUPPLIERS.filter((s) => s.category === "timber" || s.category === "general");
+  if (isPlumbElec) return SUPPLIERS.filter((s) => s.category === "plumbing_electrical" || s.category === "general");
+  return SUPPLIERS.filter((s) => s.category === "general");
+}
+
+function mapsLink(supplier) {
+  return "https://www.google.com/maps/search/?api=1&query=" + encodeURIComponent(supplier.name + " " + supplier.address);
+}
+function telLink(phone) {
+  return "tel:" + phone.replace(/\s+/g, "");
+}
+
+// Looks up matching real UK postcodes via postcodes.io (free, open, no key required)
+// so the builder can confirm they've typed a postcode that actually exists, rather
+// than relying on us to guess. Debounced by the caller.
+async function fetchPostcodeMatches(partial) {
+  const cleaned = partial.replace(/\s+/g, "");
+  if (cleaned.length < 3) return [];
+  try {
+    const res = await fetch(`https://api.postcodes.io/postcodes/${encodeURIComponent(cleaned)}/autocomplete?limit=6`);
+    const data = await res.json();
+    return data && data.result ? data.result : [];
+  } catch (e) {
+    return [];
+  }
+}
+
+async function lookupPostcodeDetail(postcode) {
+  const cleaned = postcode.trim();
+  if (!cleaned) return null;
+  try {
+    const res = await fetch(`https://api.postcodes.io/postcodes/${encodeURIComponent(cleaned)}`);
+    const data = await res.json();
+    if (data && data.status === 200 && data.result) {
+      return {
+        postcode: data.result.postcode,
+        district: data.result.admin_district,
+        ward: data.result.admin_ward,
+        region: data.result.region,
+      };
+    }
+    return null;
+  } catch (e) {
+    return null;
+  }
+}
+
+function seedRandom(seed) {
+  let s = seed;
+  return () => {
+    s = (s * 9301 + 49297) % 233280;
+    return s / 233280;
+  };
+}
+
+function basePriceFor(materialName) {
+  let hash = 0;
+  for (let i = 0; i < materialName.length; i++) hash = (hash * 31 + materialName.charCodeAt(i)) % 9973;
+  return 12 + (hash % 180);
+}
+
+function generateQuotes(materials, scale, timeframe, bufferPct) {
+  const mult = SCALE_MULTIPLIER[scale] || 1;
+  const rng = seedRandom(materials.length * 17 + (scale || "").length);
+  const buf = 1 + (Number(bufferPct) || 0) / 100;
+  return materials.map((m) => {
+    const name = typeof m === "string" ? m : m.name;
+    const base = basePriceFor(name);
+    const estimatedQty = Math.max(1, Math.round((4 + rng() * 12) * mult));
+    const requestedQty = typeof m === "object" && m.requestedQty ? m.requestedQty : null;
+    const qty = requestedQty ? Math.ceil(requestedQty * buf) : Math.ceil(estimatedQty * buf);
+    const relevantSuppliers = suppliersForMaterial(name);
+    const offers = relevantSuppliers.map((s) => {
+      const jitter = 0.9 + rng() * 0.2;
+      const unitPrice = +(base * s.priceIndex * jitter).toFixed(2);
+      let leadDays = s.speed === "fast" ? 2 + Math.round(rng() * 2) : s.speed === "standard" ? 4 + Math.round(rng() * 3) : 7 + Math.round(rng() * 4);
+      if (timeframe === "urgent") leadDays = Math.max(1, leadDays - 2);
+      const fitsTimeframe =
+        timeframe === "urgent" ? leadDays <= 5 : timeframe === "soon" ? leadDays <= 10 : true;
+      // SIMULATED stock check — no UK builders' merchant exposes a public live-stock
+      // API, so this is a deterministic demo signal (seeded, not random per render)
+      // standing in for what a real stock-check call would return.
+      const stockRoll = rng();
+      const inStock = stockRoll > 0.18;
+      const stockQty = inStock ? Math.max(qty, Math.round(qty * (1 + rng() * 3))) : Math.floor(qty * rng() * 0.6);
+      return { ...s, unitPrice, leadDays, fitsTimeframe, lineTotal: +(unitPrice * qty).toFixed(2), inStock, stockQty };
+    });
+    return { material: name, qty, requestedQty, offers };
+  });
+}
+
+function buildBundles(quotes, timeframe) {
+  // Stock-aware pool: prefer offers that fit the timeframe AND are in stock.
+  // If nothing fits both, relax timeframe first, then relax stock as a last resort
+  // (so the app always returns something, but tells you when it had to compromise).
+  const eligible = (offers) => {
+    const fitsAndStocked = offers.filter((o) => o.fitsTimeframe && o.inStock);
+    if (fitsAndStocked.length) return { pool: fitsAndStocked, relaxed: false };
+    const stockedOnly = offers.filter((o) => o.inStock);
+    if (stockedOnly.length) return { pool: stockedOnly, relaxed: "timeframe" };
+    const fitsOnly = offers.filter((o) => o.fitsTimeframe);
+    if (fitsOnly.length) return { pool: fitsOnly, relaxed: "stock" };
+    return { pool: offers, relaxed: "stock" };
+  };
+
+  const pickBundle = (scoreFn) =>
+    quotes.map((q) => {
+      const { pool, relaxed } = eligible(q.offers);
+      const best = pool.reduce((a, b) => (scoreFn(a) < scoreFn(b) ? a : b));
+      // Did we have to move off the single best-scoring offer overall because it was out of stock?
+      const idealOverall = q.offers.reduce((a, b) => (scoreFn(a) < scoreFn(b) ? a : b));
+      const substituted = idealOverall.name !== best.name && !idealOverall.inStock;
+      return { ...q, chosen: best, substituted, substitutedFrom: substituted ? idealOverall.name : null, relaxed };
+    });
+
+  const cheapest = pickBundle((o) => o.lineTotal);
+  const fastest = pickBundle((o) => o.leadDays);
+  const balanced = pickBundle((o) => o.lineTotal / 100 + o.leadDays * 3 - o.reliability * 5);
+
+  const totalOf = (bundle) => bundle.reduce((sum, q) => sum + q.chosen.lineTotal, 0);
+  const maxLeadOf = (bundle) => Math.max(...bundle.map((q) => q.chosen.leadDays));
+  const supplierCountOf = (bundle) => new Set(bundle.map((q) => q.chosen.name)).size;
+  const substitutionCountOf = (bundle) => bundle.filter((q) => q.substituted).length;
+
+  return [
+    {
+      id: "lowest-cost",
+      label: "Lowest cost",
+      icon: "coin",
+      desc: "Cheapest in-stock offer per item, mixed across suppliers",
+      items: cheapest,
+      total: totalOf(cheapest),
+      maxLead: maxLeadOf(cheapest),
+      supplierCount: supplierCountOf(cheapest),
+      substitutionCount: substitutionCountOf(cheapest),
+    },
+    {
+      id: "fastest",
+      label: "Fastest delivery",
+      icon: "bolt",
+      desc: "Shortest lead time per in-stock item, cost is secondary",
+      items: fastest,
+      total: totalOf(fastest),
+      maxLead: maxLeadOf(fastest),
+      supplierCount: supplierCountOf(fastest),
+      substitutionCount: substitutionCountOf(fastest),
+    },
+    {
+      id: "balanced",
+      label: "Balanced",
+      icon: "scale",
+      desc: "Best mix of price, speed, stock and supplier reliability",
+      items: balanced,
+      total: totalOf(balanced),
+      maxLead: maxLeadOf(balanced),
+      supplierCount: supplierCountOf(balanced),
+      substitutionCount: substitutionCountOf(balanced),
+    },
+  ];
+}
+
+const STEPS = ["Inquiry", "Bundles", "Stock check", "Tracking"];
+
+function Stepper({ step }) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", marginBottom: "2rem" }}>
+      {STEPS.map((s, i) => (
+        <React.Fragment key={s}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <div
+              style={{
+                width: 30,
+                height: 30,
+                borderRadius: 6,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                fontFamily: "var(--font-mono, monospace)",
+                fontSize: 13,
+                fontWeight: 600,
+                background: i <= step ? ORANGE : "transparent",
+                color: i <= step ? CREAM : AGGREGATE,
+                border: `1.5px solid ${i <= step ? ORANGE : AGGREGATE}`,
+              }}
+            >
+              {String(i + 1).padStart(2, "0")}
+            </div>
+            <span
+              style={{
+                fontSize: 13,
+                fontWeight: i === step ? 700 : 500,
+                color: i <= step ? CHARCOAL : AGGREGATE,
+                letterSpacing: 0.3,
+                textTransform: "uppercase",
+              }}
+            >
+              {s}
+            </span>
+          </div>
+          {i < STEPS.length - 1 && (
+            <div style={{ flex: 1, height: 2, margin: "0 14px", background: i < step ? ORANGE : "#D8D3C6" }} />
+          )}
+        </React.Fragment>
+      ))}
+    </div>
+  );
+}
+
+function Pill({ active, onClick, children }) {
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        padding: "8px 16px",
+        borderRadius: 4,
+        border: `1.5px solid ${active ? ORANGE : "#D8D3C6"}`,
+        background: active ? ORANGE : "transparent",
+        color: active ? CREAM : CHARCOAL,
+        fontWeight: 600,
+        fontSize: 13,
+        cursor: "pointer",
+        transition: "all 0.12s",
+      }}
+    >
+      {children}
+    </button>
+  );
+}
+
+function SectionLabel({ n, children }) {
+  return (
+    <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 14 }}>
+      <span style={{ fontFamily: "var(--font-mono, monospace)", fontSize: 12, color: ORANGE, fontWeight: 700 }}>
+        {n}
+      </span>
+      <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: CHARCOAL, letterSpacing: 0.2 }}>{children}</h3>
+    </div>
+  );
+}
+
+function PostcodeField({ postcode, setPostcode, confirmed, setConfirmed }) {
+  const [suggestions, setSuggestions] = useState([]);
+  const [checking, setChecking] = useState(false);
+  const [detail, setDetail] = useState(null);
+  const [notFound, setNotFound] = useState(false);
+
+  React.useEffect(() => {
+    setConfirmed(false);
+    setDetail(null);
+    setNotFound(false);
+    if (postcode.trim().length < 3) {
+      setSuggestions([]);
+      return;
+    }
+    setChecking(true);
+    const handle = setTimeout(async () => {
+      const matches = await fetchPostcodeMatches(postcode);
+      setSuggestions(matches);
+      setChecking(false);
+    }, 350);
+    return () => clearTimeout(handle);
+  }, [postcode]);
+
+  const selectSuggestion = async (pc) => {
+    setPostcode(pc);
+    setSuggestions([]);
+    setChecking(true);
+    const d = await lookupPostcodeDetail(pc);
+    setChecking(false);
+    if (d) {
+      setDetail(d);
+      setConfirmed(true);
+      setNotFound(false);
+    } else {
+      setNotFound(true);
+      setConfirmed(false);
+    }
+  };
+
+  return (
+    <div style={{ position: "relative" }}>
+      <label style={labelStyle}>Site postcode</label>
+      <input
+        value={postcode}
+        onChange={(e) => setPostcode(e.target.value)}
+        placeholder="e.g. E11 4EL"
+        style={{ ...inputStyle, borderColor: confirmed ? GREEN : notFound ? "#C0392B" : "#D8D3C6" }}
+      />
+      {checking && <p style={{ fontSize: 11, color: AGGREGATE, marginTop: 4 }}>Checking postcode…</p>}
+      {!checking && suggestions.length > 0 && (
+        <div
+          style={{
+            position: "absolute",
+            zIndex: 5,
+            background: "#fff",
+            border: "1.5px solid #D8D3C6",
+            borderRadius: 4,
+            marginTop: 2,
+            width: "100%",
+            maxWidth: 320,
+            boxShadow: "0 4px 10px rgba(0,0,0,0.08)",
+          }}
+        >
+          {suggestions.map((s) => (
+            <div
+              key={s}
+              onClick={() => selectSuggestion(s)}
+              style={{ padding: "8px 12px", fontSize: 13, cursor: "pointer", borderBottom: "1px solid #EEEAE0" }}
+              onMouseDown={(e) => e.preventDefault()}
+            >
+              {s}
+            </div>
+          ))}
+        </div>
+      )}
+      {confirmed && detail && (
+        <p style={{ fontSize: 12, color: GREEN, marginTop: 6, fontWeight: 600 }}>
+          ✓ Confirmed: {detail.postcode} · {detail.district}, {detail.region}
+        </p>
+      )}
+      {notFound && (
+        <p style={{ fontSize: 12, color: "#C0392B", marginTop: 6 }}>
+          We couldn't confirm that postcode — check it and select it from the suggestions above.
+        </p>
+      )}
+      {!confirmed && !notFound && !checking && postcode.trim().length >= 3 && suggestions.length === 0 && (
+        <p style={{ fontSize: 11, color: AGGREGATE, marginTop: 4 }}>No matches yet — keep typing.</p>
+      )}
+    </div>
+  );
+}
+
+const ACCESS_OPTIONS = [
+  ["narrow-road", "Narrow access road"],
+  ["no-crane", "No room for crane/HIAB"],
+  ["restricted-hours", "Restricted delivery hours"],
+  ["no-pavement", "No pavement drop-off"],
+];
+
+function InquiryForm({ onSubmit, prefillItems, resourcingFrom, resourcingNote }) {
+  const [path, setPath] = useState(null); // 'expert' | 'guided'
+  const [propertyType, setPropertyType] = useState("");
+  const [scale, setScale] = useState("");
+  const [stages, setStages] = useState([]);
+  const [fullHouse, setFullHouse] = useState(false);
+  const [expertItems, setExpertItems] = useState([{ name: "", qty: "" }]);
+  const [timeframe, setTimeframe] = useState("");
+  const [budgetPriority, setBudgetPriority] = useState("");
+  const [houseNumberStreet, setHouseNumberStreet] = useState("");
+  const [postcode, setPostcode] = useState("");
+  const [postcodeConfirmed, setPostcodeConfirmed] = useState(false);
+  const [access, setAccess] = useState([]);
+  const [accessDetails, setAccessDetails] = useState({});
+  const [buffer, setBuffer] = useState("");
+  const [showMissing, setShowMissing] = useState(false);
+
+  React.useEffect(() => {
+    if (!prefillItems || prefillItems.length === 0) return;
+    setPath("expert");
+    setExpertItems(prefillItems.map((it) => ({ name: it.material, qty: String(it.qty) })));
+  }, [prefillItems]);
+
+  const toggleStage = (s) => {
+    setFullHouse(false);
+    setStages((prev) => (prev.includes(s) ? prev.filter((x) => x !== s) : [...prev, s]));
+  };
+
+  const selectFullHouse = () => {
+    setFullHouse(true);
+    setStages(ALL_STAGE_IDS);
+  };
+
+  const toggleAccess = (a) =>
+    setAccess((prev) => {
+      const next = prev.includes(a) ? prev.filter((x) => x !== a) : [...prev, a];
+      if (prev.includes(a)) {
+        setAccessDetails((d) => {
+          const copy = { ...d };
+          delete copy[a];
+          return copy;
+        });
+      }
+      return next;
+    });
+
+  const setAccessDetail = (a, text) => setAccessDetails((d) => ({ ...d, [a]: text }));
+
+  const updateExpertItem = (idx, field, value) => {
+    setExpertItems((prev) => prev.map((it, i) => (i === idx ? { ...it, [field]: value } : it)));
+  };
+  const addExpertItem = () => setExpertItems((prev) => [...prev, { name: "", qty: "" }]);
+  const removeExpertItem = (idx) => setExpertItems((prev) => (prev.length > 1 ? prev.filter((_, i) => i !== idx) : prev));
+
+  const expertItemsValid =
+    expertItems.length > 0 && expertItems.every((it) => it.name.trim().length > 1 && it.qty.toString().trim().length > 0 && Number(it.qty) > 0);
+
+  // Every access constraint that's been selected must have its detail box filled in.
+  const accessDetailsComplete = access.every((a) => (accessDetails[a] || "").trim().length > 0);
+
+  const addressComplete = houseNumberStreet.trim().length > 2 && postcode.trim().length > 1 && postcodeConfirmed;
+
+  // Build a precise list of what's still missing, in the order it appears on the form,
+  // so the person can see exactly what to fix instead of guessing why the button is greyed out.
+  const missingFields = [];
+  if (!path) missingFields.push("Choose whether you know your materials or need guidance");
+  if (path === "expert") {
+    if (!expertItemsValid) {
+      const badRow = expertItems.findIndex((it) => !(it.name.trim().length > 1 && it.qty.toString().trim().length > 0 && Number(it.qty) > 0));
+      missingFields.push(
+        badRow === -1
+          ? "Add at least one material with a name and quantity"
+          : `Material row ${badRow + 1}: needs both a name and a quantity greater than 0`
+      );
+    }
+    if (!scale) missingFields.push("Select the scale of the project");
+  }
+  if (path === "guided") {
+    if (!propertyType) missingFields.push("Select the property type");
+    if (!scale) missingFields.push("Select the scale of the build");
+    if (stages.length === 0) missingFields.push("Select at least one build stage, or 'starting from scratch'");
+  }
+  if (path && !timeframe) missingFields.push("Select when you need materials on site");
+  if (path && !budgetPriority) missingFields.push("Select what matters most (cost, speed or balance)");
+  if (path && houseNumberStreet.trim().length <= 2) missingFields.push("Enter the house number & street");
+  if (path && postcode.trim().length <= 1) missingFields.push("Enter the site postcode");
+  else if (path && !postcodeConfirmed) missingFields.push("Confirm the postcode by selecting it from the suggestions list");
+  if (path && !buffer) missingFields.push("Select a waste / buffer allowance");
+  if (path && !accessDetailsComplete) {
+    const missingAccess = access.filter((a) => !(accessDetails[a] || "").trim().length > 0);
+    missingAccess.forEach((a) => {
+      const label = ACCESS_OPTIONS.find(([id]) => id === a)?.[1] || a;
+      missingFields.push(`Describe the access constraint: ${label}`);
+    });
+  }
+
+  const canSubmit = missingFields.length === 0;
+
+  React.useEffect(() => {
+    if (canSubmit) setShowMissing(false);
+  }, [canSubmit]);
+
+  const handleSubmit = () => {
+    if (!canSubmit) {
+      setShowMissing(true);
+      return;
+    }
+    let materials = [];
+    if (path === "expert") {
+      materials = expertItems
+        .filter((it) => it.name.trim())
+        .map((it) => ({ name: it.name.trim(), requestedQty: Number(it.qty) }));
+    } else {
+      const set = new Set();
+      stages.forEach((s) => (STAGE_MATERIALS[s] || []).forEach((m) => set.add(m)));
+      materials = Array.from(set).map((name) => ({ name, requestedQty: null }));
+    }
+    onSubmit({
+      path,
+      propertyType,
+      scale,
+      stages,
+      fullHouse,
+      materials,
+      timeframe,
+      budgetPriority,
+      address: `${houseNumberStreet.trim()}, ${postcode.trim().toUpperCase()}`,
+      postcode,
+      access,
+      accessDetails,
+      buffer,
+    });
+  };
+
+  return (
+    <div>
+      {resourcingFrom && (
+        <div style={{ background: "#FEF3CD", border: "1.5px solid #9F7400", borderRadius: 6, padding: "12px 16px", marginBottom: 24 }}>
+          <p style={{ margin: 0, fontWeight: 700, fontSize: 13, color: "#7A5A00" }}>
+            Re-sourcing items {resourcingFrom} couldn't fulfil
+          </p>
+          {resourcingNote && (
+            <p style={{ margin: "4px 0 0", fontSize: 12, fontStyle: "italic", color: "#7A5A00" }}>"{resourcingNote}"</p>
+          )}
+          <p style={{ margin: "6px 0 0", fontSize: 12, color: "#7A5A00" }}>Items are pre-filled below — adjust if needed, then find new quotes.</p>
+        </div>
+      )}
+      <p style={{ color: AGGREGATE, fontSize: 14, marginTop: -8, marginBottom: 28, maxWidth: 520 }}>
+        Tell us about the build. We'll work out exactly what materials you need, then go and price them
+        across the trade merchants. Every question below needs an answer before we can build accurate quotes.
+      </p>
+
+      <SectionLabel n="01">Do you already know what materials you need?</SectionLabel>
+      <div style={{ display: "flex", gap: 10, marginBottom: 28, flexWrap: "wrap" }}>
+        <Pill active={path === "expert"} onClick={() => setPath("expert")}>
+          Yes — I'll list them
+        </Pill>
+        <Pill active={path === "guided"} onClick={() => setPath("guided")}>
+          Not exactly — guide me
+        </Pill>
+      </div>
+
+      {path === "expert" && (
+        <div style={{ marginBottom: 28 }}>
+          <SectionLabel n="02">List your materials and quantities</SectionLabel>
+          <p style={{ fontSize: 12, color: AGGREGATE, marginTop: -8, marginBottom: 12 }}>
+            Add each material with how many units you need — this is what we'll send to suppliers for pricing.
+          </p>
+          {expertItems.map((it, idx) => (
+            <div key={idx} style={{ display: "flex", gap: 8, marginBottom: 8, alignItems: "center" }}>
+              <input
+                value={it.name}
+                onChange={(e) => updateExpertItem(idx, "name", e.target.value)}
+                placeholder="e.g. Ready-mix concrete"
+                style={{ ...inputStyle, marginTop: 0, flex: "3 1 0" }}
+              />
+              <input
+                value={it.qty}
+                onChange={(e) => updateExpertItem(idx, "qty", e.target.value.replace(/[^0-9]/g, ""))}
+                placeholder="Qty"
+                inputMode="numeric"
+                style={{ ...inputStyle, marginTop: 0, flex: "1 1 0", minWidth: 70 }}
+              />
+              <button
+                onClick={() => removeExpertItem(idx)}
+                disabled={expertItems.length === 1}
+                style={{
+                  border: "none",
+                  background: "transparent",
+                  color: expertItems.length === 1 ? "#D8D3C6" : "#C0392B",
+                  fontSize: 18,
+                  cursor: expertItems.length === 1 ? "not-allowed" : "pointer",
+                  padding: "0 6px",
+                }}
+                aria-label="Remove item"
+              >
+                ×
+              </button>
+            </div>
+          ))}
+          <button
+            onClick={addExpertItem}
+            style={{
+              marginTop: 4,
+              padding: "8px 14px",
+              borderRadius: 4,
+              border: "1.5px dashed #D8D3C6",
+              background: "transparent",
+              color: CHARCOAL,
+              fontWeight: 600,
+              fontSize: 12,
+              cursor: "pointer",
+            }}
+          >
+            + Add another material
+          </button>
+
+          <div style={{ marginTop: 20 }}>
+            <label style={labelStyle}>What's the scale of the project?</label>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
+              {[
+                ["small", "Small (< 50m²)"],
+                ["medium", "Medium (50–150m²)"],
+                ["large", "Large (150–400m²)"],
+                ["extra-large", "Extra large (400m²+)"],
+              ].map(([id, lab]) => (
+                <Pill key={id} active={scale === id} onClick={() => setScale(id)}>
+                  {lab}
+                </Pill>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {path === "guided" && (
+        <>
+          <div style={{ marginBottom: 28 }}>
+            <SectionLabel n="02">What type of property is this?</SectionLabel>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 8 }}>
+              {PROPERTY_TYPES.map((p) => (
+                <button
+                  key={p.id}
+                  onClick={() => setPropertyType(p.id)}
+                  style={{
+                    padding: "12px 14px",
+                    borderRadius: 4,
+                    border: `1.5px solid ${propertyType === p.id ? ORANGE : "#D8D3C6"}`,
+                    background: propertyType === p.id ? ORANGE : CARD,
+                    color: propertyType === p.id ? CREAM : CHARCOAL,
+                    fontWeight: 600,
+                    fontSize: 13,
+                    textAlign: "left",
+                    cursor: "pointer",
+                  }}
+                >
+                  {p.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div style={{ marginBottom: 28 }}>
+            <SectionLabel n="03">What's the scale of the build?</SectionLabel>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              {[
+                ["small", "Small (< 50m²)"],
+                ["medium", "Medium (50–150m²)"],
+                ["large", "Large (150–400m²)"],
+                ["extra-large", "Extra large (400m²+)"],
+              ].map(([id, lab]) => (
+                <Pill key={id} active={scale === id} onClick={() => setScale(id)}>
+                  {lab}
+                </Pill>
+              ))}
+            </div>
+          </div>
+
+          <div style={{ marginBottom: 28 }}>
+            <SectionLabel n="04">What stage(s) do you need materials for?</SectionLabel>
+            <p style={{ fontSize: 12, color: AGGREGATE, marginTop: -8, marginBottom: 10 }}>
+              Select all that apply, or choose a full build if you're starting from scratch.
+            </p>
+            <div style={{ marginBottom: 10 }}>
+              <button
+                onClick={selectFullHouse}
+                style={{
+                  padding: "12px 14px",
+                  borderRadius: 4,
+                  border: `1.5px solid ${fullHouse ? ORANGE : "#D8D3C6"}`,
+                  background: fullHouse ? ORANGE : CARD,
+                  color: fullHouse ? CREAM : CHARCOAL,
+                  fontWeight: 700,
+                  fontSize: 13,
+                  cursor: "pointer",
+                  width: "100%",
+                  textAlign: "left",
+                }}
+              >
+                Starting from scratch — build the whole house (all stages, foundation to finishing)
+              </button>
+            </div>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              {[
+                ["foundation", "Foundation & groundwork"],
+                ["structure", "Structure & shell"],
+                ["roofing", "Roofing"],
+                ["windows_doors", "Windows & doors"],
+                ["first_fix", "First fix"],
+                ["second_fix", "Second fix"],
+                ["finishing", "Finishing"],
+              ].map(([id, lab]) => (
+                <Pill key={id} active={stages.includes(id)} onClick={() => toggleStage(id)}>
+                  {lab}
+                </Pill>
+              ))}
+            </div>
+          </div>
+        </>
+      )}
+
+      {path && (
+        <>
+          <div style={{ marginBottom: 28 }}>
+            <SectionLabel n={path === "expert" ? "03" : "05"}>When do you need materials on site?</SectionLabel>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              {[
+                ["urgent", "Urgent — within a few days"],
+                ["soon", "Soon — within 2 weeks"],
+                ["flexible", "Flexible — no rush"],
+              ].map(([id, lab]) => (
+                <Pill key={id} active={timeframe === id} onClick={() => setTimeframe(id)}>
+                  {lab}
+                </Pill>
+              ))}
+            </div>
+          </div>
+
+          <div style={{ marginBottom: 28 }}>
+            <SectionLabel n={path === "expert" ? "04" : "06"}>What matters most?</SectionLabel>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              {[
+                ["cost", "Lowest cost"],
+                ["speed", "Fastest delivery"],
+                ["balanced", "Best balance"],
+              ].map(([id, lab]) => (
+                <Pill key={id} active={budgetPriority === id} onClick={() => setBudgetPriority(id)}>
+                  {lab}
+                </Pill>
+              ))}
+            </div>
+          </div>
+
+          <div style={{ marginBottom: 28 }}>
+            <SectionLabel n={path === "expert" ? "05" : "07"}>Delivery site details</SectionLabel>
+            <p style={{ fontSize: 12, color: AGGREGATE, marginTop: -6, marginBottom: 12 }}>
+              Supplier matching currently covers real merchants across Greater London. Enter a London postcode —
+              we'll confirm it's real before you continue.
+            </p>
+            <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 14 }}>
+              <div style={{ flex: "1 1 220px" }}>
+                <label style={labelStyle}>House number & street</label>
+                <input
+                  value={houseNumberStreet}
+                  onChange={(e) => setHouseNumberStreet(e.target.value)}
+                  placeholder="e.g. 27 Wickham Lane"
+                  style={inputStyle}
+                />
+              </div>
+              <div style={{ flex: "1 1 200px" }}>
+                <PostcodeField
+                  postcode={postcode}
+                  setPostcode={setPostcode}
+                  confirmed={postcodeConfirmed}
+                  setConfirmed={setPostcodeConfirmed}
+                />
+              </div>
+            </div>
+            <div style={{ marginBottom: 16 }}>
+              <label style={labelStyle}>Waste / buffer allowance</label>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
+                {[
+                  ["5", "5% extra"],
+                  ["10", "10% extra"],
+                  ["15", "15% extra"],
+                  ["20", "20% extra"],
+                ].map(([id, lab]) => (
+                  <Pill key={id} active={buffer === id} onClick={() => setBuffer(id)}>
+                    {lab}
+                  </Pill>
+                ))}
+              </div>
+            </div>
+            <label style={labelStyle}>Site access constraints</label>
+            <p style={{ fontSize: 12, color: AGGREGATE, marginTop: 4, marginBottom: 8 }}>
+              Select any that apply — none is a valid answer if access is unrestricted. Selecting one opens a box
+              to describe it so suppliers know exactly what they're dealing with.
+            </p>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              {ACCESS_OPTIONS.map(([id, lab]) => (
+                <Pill key={id} active={access.includes(id)} onClick={() => toggleAccess(id)}>
+                  {lab}
+                </Pill>
+              ))}
+            </div>
+            {access.map((a) => {
+              const label = ACCESS_OPTIONS.find(([id]) => id === a)?.[1] || a;
+              return (
+                <div key={a} style={{ marginTop: 12 }}>
+                  <label style={labelStyle}>{label} — describe it</label>
+                  <textarea
+                    value={accessDetails[a] || ""}
+                    onChange={(e) => setAccessDetail(a, e.target.value)}
+                    placeholder={`Give details so the delivery driver knows what to expect, e.g. exact width, time windows, nearest drop point...`}
+                    rows={2}
+                    style={textareaStyle}
+                  />
+                </div>
+              );
+            })}
+          </div>
+        </>
+      )}
+
+      <div style={{ position: "relative" }}>
+        <button
+          onClick={handleSubmit}
+          onMouseEnter={() => setShowMissing(true)}
+          onMouseLeave={() => setShowMissing(false)}
+          style={{
+            marginTop: 8,
+            padding: "13px 26px",
+            borderRadius: 4,
+            border: "none",
+            background: canSubmit ? CHARCOAL : showMissing ? ORANGE : CHARCOAL,
+            color: CREAM,
+            fontWeight: 700,
+            fontSize: 14,
+            letterSpacing: 0.3,
+            cursor: "pointer",
+            width: "100%",
+          }}
+        >
+          {canSubmit ? "Find suppliers & build quotes →" : showMissing ? `Missing ${missingFields.length} item${missingFields.length === 1 ? "" : "s"} — hover for details` : "Continue"}
+        </button>
+
+        {showMissing && !canSubmit && (
+          <div
+            style={{
+              position: "absolute",
+              bottom: "calc(100% + 8px)",
+              left: 0,
+              right: 0,
+              zIndex: 10,
+              background: "#72243E",
+              border: "1.5px solid #4B1528",
+              borderRadius: 6,
+              padding: "14px 16px",
+              boxShadow: "0 6px 16px rgba(0,0,0,0.18)",
+            }}
+          >
+            <p style={{ margin: "0 0 8px", fontSize: 12, fontWeight: 700, color: "#FBEAF0", textTransform: "uppercase", letterSpacing: 0.4 }}>
+              Still needed
+            </p>
+            <ul style={{ margin: 0, paddingLeft: 18 }}>
+              {missingFields.map((msg, i) => (
+                <li key={i} style={{ fontSize: 13, color: "#FBEAF0", marginBottom: 4 }}>
+                  {msg}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+const labelStyle = { fontSize: 12, fontWeight: 700, color: AGGREGATE, textTransform: "uppercase", letterSpacing: 0.4 };
+const inputStyle = {
+  width: "100%",
+  padding: "9px 10px",
+  marginTop: 6,
+  borderRadius: 4,
+  border: "1.5px solid #D8D3C6",
+  fontSize: 14,
+  background: "#fff",
+  boxSizing: "border-box",
+};
+const textareaStyle = { ...inputStyle, marginTop: 10, resize: "vertical", fontFamily: "inherit" };
+
+function Docket({ children }) {
+  return (
+    <span
+      style={{
+        fontFamily: "var(--font-mono, monospace)",
+        fontSize: 12,
+        fontWeight: 700,
+        background: CHARCOAL,
+        color: "#9FE1CB",
+        padding: "2px 8px",
+        borderRadius: 3,
+        letterSpacing: 0.4,
+      }}
+    >
+      {children}
+    </span>
+  );
+}
+
+function DemoBadge({ children }) {
+  return (
+    <span
+      style={{
+        display: "inline-block",
+        fontSize: 10.5,
+        fontWeight: 700,
+        textTransform: "uppercase",
+        letterSpacing: 0.5,
+        background: "#FAC775",
+        color: "#412402",
+        padding: "2px 7px",
+        borderRadius: 3,
+        marginLeft: 8,
+        verticalAlign: 1,
+      }}
+    >
+      {children || "Demo"}
+    </span>
+  );
+}
+
+function BundleView({ inquiry, quotes, bundles, onSelect, onBack }) {
+  const [openId, setOpenId] = useState(bundles[1].id);
+  const recommended =
+    inquiry.budgetPriority === "cost" ? "lowest-cost" : inquiry.budgetPriority === "speed" ? "fastest" : "balanced";
+
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 20 }}>
+        <div>
+          <p style={{ color: AGGREGATE, fontSize: 13, margin: 0 }}>
+            {quotes.length} materials · {inquiry.address} · timeframe:{" "}
+            <strong style={{ color: CHARCOAL }}>{inquiry.timeframe}</strong>
+          </p>
+        </div>
+        <button onClick={onBack} style={ghostBtnStyle}>
+          ← Edit inquiry
+        </button>
+      </div>
+
+      <p style={{ fontSize: 14, color: CHARCOAL, marginBottom: 8, maxWidth: 560 }}>
+        These are real builders' merchants near you, matched to each material and ranked into three bundles.
+        Click a bundle to see the full breakdown, supplier address and phone number.
+      </p>
+      <p style={{ fontSize: 12, color: AGGREGATE, marginBottom: 20, maxWidth: 560 }}>
+        Prices shown are estimates based on typical trade rates, not live price-list data — call the supplier
+        to confirm before ordering.
+      </p>
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12, marginBottom: 28 }}>
+        {bundles.map((b) => (
+          <div
+            key={b.id}
+            onClick={() => setOpenId(b.id)}
+            style={{
+              cursor: "pointer",
+              background: openId === b.id ? CHARCOAL : "#fff",
+              color: openId === b.id ? CREAM : CHARCOAL,
+              border: `1.5px solid ${b.id === recommended ? ORANGE : "#D8D3C6"}`,
+              borderRadius: 6,
+              padding: "16px 18px",
+              position: "relative",
+            }}
+          >
+            {b.id === recommended && (
+              <span
+                style={{
+                  position: "absolute",
+                  top: -10,
+                  left: 14,
+                  background: ORANGE,
+                  color: CREAM,
+                  fontSize: 10,
+                  fontWeight: 700,
+                  padding: "2px 8px",
+                  borderRadius: 3,
+                  letterSpacing: 0.4,
+                  textTransform: "uppercase",
+                }}
+              >
+                Suggested
+              </span>
+            )}
+            <p style={{ margin: "4px 0 2px", fontSize: 13, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.3 }}>
+              {b.label}
+            </p>
+            <p style={{ margin: "0 0 14px", fontSize: 12, opacity: 0.7 }}>{b.desc}</p>
+            <p style={{ margin: 0, fontSize: 26, fontWeight: 700, fontFamily: "var(--font-mono, monospace)" }}>
+              £{b.total.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+            </p>
+            <div style={{ display: "flex", gap: 14, marginTop: 10, fontSize: 12, opacity: 0.85 }}>
+              <span>⏱ up to {b.maxLead}d</span>
+              <span>🏭 {b.supplierCount} suppliers</span>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {bundles
+        .filter((b) => b.id === openId)
+        .map((b) => (
+          <div key={b.id} style={{ background: "#fff", border: "1.5px solid #D8D3C6", borderRadius: 6, overflow: "hidden", marginBottom: 24 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "2fr 0.7fr 1.3fr 0.8fr 0.8fr", gap: 0, padding: "10px 16px", background: CARD, fontSize: 11, fontWeight: 700, color: AGGREGATE, textTransform: "uppercase", letterSpacing: 0.4 }}>
+              <span>Material</span>
+              <span>Qty</span>
+              <span>Supplier</span>
+              <span>Lead time</span>
+              <span style={{ textAlign: "right" }}>Line total</span>
+            </div>
+            {b.items.map((it, idx) => (
+              <div
+                key={it.material + idx}
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "2fr 0.7fr 1.3fr 0.8fr 0.8fr",
+                  gap: 0,
+                  padding: "10px 16px",
+                  borderTop: "1px solid #EEEAE0",
+                  fontSize: 13,
+                  alignItems: "center",
+                }}
+              >
+                <span>{it.material}</span>
+                <span style={{ color: AGGREGATE }}>{it.qty}</span>
+                <span>
+                  <a
+                    href={mapsLink(it.chosen)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    style={{ color: CHARCOAL, fontWeight: 600, textDecoration: "none", borderBottom: `1px dotted ${AGGREGATE}` }}
+                    title={it.chosen.address}
+                  >
+                    {it.chosen.name}
+                  </a>
+                </span>
+                <span style={{ color: it.chosen.leadDays <= 3 ? GREEN : CHARCOAL }}>{it.chosen.leadDays}d</span>
+                <span style={{ textAlign: "right", fontFamily: "var(--font-mono, monospace)" }}>
+                  £{it.chosen.lineTotal.toFixed(2)}
+                </span>
+              </div>
+            ))}
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                padding: "14px 16px",
+                background: CHARCOAL,
+                color: CREAM,
+              }}
+            >
+              <span style={{ fontSize: 13, fontWeight: 600 }}>
+                Total · {b.items.length} items · {b.supplierCount} suppliers
+              </span>
+              <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+                <span style={{ fontFamily: "var(--font-mono, monospace)", fontSize: 18, fontWeight: 700 }}>
+                  £{b.total.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                </span>
+                <button
+                  onClick={() => onSelect(b)}
+                  style={{
+                    padding: "9px 18px",
+                    borderRadius: 4,
+                    border: "none",
+                    background: ORANGE,
+                    color: CREAM,
+                    fontWeight: 700,
+                    fontSize: 13,
+                    cursor: "pointer",
+                  }}
+                >
+                  Check stock with suppliers →
+                </button>
+              </div>
+            </div>
+          </div>
+        ))}
+    </div>
+  );
+}
+
+const ghostBtnStyle = {
+  padding: "8px 14px",
+  borderRadius: 4,
+  border: "1.5px solid #D8D3C6",
+  background: "transparent",
+  color: CHARCOAL,
+  fontWeight: 600,
+  fontSize: 12,
+  cursor: "pointer",
+};
+
+const TRACK_STAGES = ["Order confirmed", "Preparing dispatch", "Out for delivery", "Delivered to site"];
+
+function groupOrderBySupplier(order) {
+  const map = {};
+  order.items.forEach((it) => {
+    const key = it.chosen.name;
+    if (!map[key]) map[key] = { supplier: it.chosen, items: [] };
+    map[key].items.push({ material: it.material, qty: it.qty });
+  });
+  return Object.values(map);
+}
+
+function StockCheckView({ order, inquiry, orderNumber, onAllConfirmed, onBack, onResource, builderEmail, onBuilderEmailChange }) {
+  const groups = useMemo(() => groupOrderBySupplier(order), [order]);
+  const [emails, setEmails] = useState(() => Object.fromEntries(groups.map((g) => [g.supplier.name, g.supplier.email || ""])));
+  const [sendState, setSendState] = useState("idle"); // idle | sending | sent | error
+  const [sendError, setSendError] = useState("");
+  const [results, setResults] = useState(null); // per-supplier send results from backend
+  const [orderStatus, setOrderStatus] = useState(null); // polled reply status
+  const [polling, setPolling] = useState(false);
+
+  const builderEmailValid = /\S+@\S+\.\S+/.test(builderEmail || "");
+  const allEmailsValid = builderEmailValid && groups.every((g) => /\S+@\S+\.\S+/.test(emails[g.supplier.name] || ""));
+
+  const updateEmail = (supplierName, value) => setEmails((prev) => ({ ...prev, [supplierName]: value }));
+
+  const sendStockChecks = async () => {
+    setSendState("sending");
+    setSendError("");
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/stock-check`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          orderNumber,
+          deliveryAddress: inquiry.address,
+          timeframe: inquiry.timeframe,
+          builderEmail,
+          suppliers: groups.map((g) => ({
+            name: g.supplier.name,
+            email: emails[g.supplier.name],
+            items: g.items,
+          })),
+        }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || `Server responded with ${res.status}`);
+      }
+      const data = await res.json();
+      setResults(data.results);
+      setSendState("sent");
+      setPolling(true);
+    } catch (e) {
+      setSendState("error");
+      setSendError(
+        e.message === "Failed to fetch"
+          ? "Couldn't reach the MaterialOrder server. Make sure it's running and API_BASE_URL is set correctly."
+          : e.message
+      );
+    }
+  };
+
+  React.useEffect(() => {
+    if (!polling) return;
+    const interval = setInterval(async () => {
+      try {
+        const res = await fetch(`${API_BASE_URL}/api/orders/${encodeURIComponent(orderNumber)}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        setOrderStatus(data);
+        const allReplied = Object.values(data.suppliers).every((s) => s.status !== "sent");
+        if (allReplied) setPolling(false);
+      } catch (e) {
+        // Silent — keep polling, the server might just be momentarily unreachable.
+      }
+    }, 4000);
+    return () => clearInterval(interval);
+  }, [polling, orderNumber]);
+
+  const statusFor = (supplierName) => {
+    if (!orderStatus) return null;
+    const entry = Object.values(orderStatus.suppliers).find((s) => s.supplierName === supplierName);
+    return entry || null;
+  };
+
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8 }}>
+        <div>
+          <Docket>{orderNumber}</Docket>
+          <p style={{ margin: "10px 0 0", fontSize: 13, color: AGGREGATE, maxWidth: 480 }}>
+            We'll email each supplier the exact items and quantities and ask them to confirm stock. No phone
+            call needed — though you're always free to call instead if you'd rather.
+          </p>
+        </div>
+        <button onClick={onBack} style={ghostBtnStyle}>
+          ← Back to bundles
+        </button>
+      </div>
+
+      {sendState !== "sent" && (
+        <div style={{ marginTop: 24 }}>
+          <SectionLabel n="·">Your email address</SectionLabel>
+          <p style={{ fontSize: 12, color: AGGREGATE, marginTop: -8, marginBottom: 10, maxWidth: 520 }}>
+            We'll email you as soon as each supplier replies — no need to keep this page open.
+          </p>
+          <input
+            type="email"
+            value={builderEmail}
+            onChange={(e) => onBuilderEmailChange(e.target.value)}
+            placeholder="your@email.com"
+            style={{ ...inputStyle, marginBottom: 20, maxWidth: 320 }}
+          />
+          {groups.some((g) => !g.supplier.email) && (
+            <>
+              <SectionLabel n="·">Confirm supplier email addresses</SectionLabel>
+              <p style={{ fontSize: 12, color: AGGREGATE, marginTop: -8, marginBottom: 14, maxWidth: 520 }}>
+                Some merchants don't have an email on file yet. Add it below, then save it in the SUPPLIERS
+                list at the top of this file so you won't be asked again. If you don't have one, call the
+                supplier — their number is shown below — and ask, or check their website.
+              </p>
+            </>
+          )}
+          {groups.map((g) => (
+            <div key={g.supplier.name} style={{ background: "#fff", border: "1.5px solid #D8D3C6", borderRadius: 6, padding: "14px 16px", marginBottom: 10 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 8 }}>
+                <div>
+                  <p style={{ margin: 0, fontWeight: 700, fontSize: 14 }}>{g.supplier.name}</p>
+                  <p style={{ margin: "2px 0 0", fontSize: 12, color: AGGREGATE }}>
+                    {g.items.length} item{g.items.length > 1 ? "s" : ""} · {g.items.map((it) => it.material).join(", ")}
+                  </p>
+                  <a href={telLink(g.supplier.phone)} style={{ fontSize: 12, fontWeight: 600, color: ORANGE, textDecoration: "none" }}>
+                    {g.supplier.email ? `📞 ${g.supplier.phone}` : `Or call ${g.supplier.phone}`}
+                  </a>
+                </div>
+                {g.supplier.email ? (
+                  <p style={{ margin: 0, fontSize: 13, color: AGGREGATE, alignSelf: "center" }}>{g.supplier.email}</p>
+                ) : (
+                  <input
+                    type="email"
+                    value={emails[g.supplier.name]}
+                    onChange={(e) => updateEmail(g.supplier.name, e.target.value)}
+                    placeholder="supplier@example.com"
+                    style={{ ...inputStyle, marginTop: 0, width: 220 }}
+                  />
+                )}
+              </div>
+            </div>
+          ))}
+
+          <button
+            onClick={sendStockChecks}
+            disabled={!allEmailsValid || sendState === "sending"}
+            style={{
+              marginTop: 10,
+              padding: "13px 26px",
+              borderRadius: 4,
+              border: "none",
+              background: allEmailsValid ? CHARCOAL : "#D8D3C6",
+              color: allEmailsValid ? CREAM : "#8A8579",
+              fontWeight: 700,
+              fontSize: 14,
+              letterSpacing: 0.3,
+              cursor: allEmailsValid ? "pointer" : "not-allowed",
+              width: "100%",
+            }}
+          >
+            {sendState === "sending" ? "Sending…" : "Send stock-check emails →"}
+          </button>
+
+          {sendState === "error" && (
+            <p style={{ fontSize: 13, color: "#C0392B", marginTop: 10 }}>{sendError}</p>
+          )}
+        </div>
+      )}
+
+      {sendState === "sent" && (
+        <div style={{ marginTop: 24 }}>
+          <SectionLabel n="·">Awaiting supplier replies</SectionLabel>
+          <p style={{ fontSize: 12, color: AGGREGATE, marginTop: -8, marginBottom: 14, maxWidth: 520 }}>
+            Each supplier received an email with a one-tap link to confirm stock — no account needed on their
+            end. This page checks for replies every few seconds.
+          </p>
+          {groups.map((g) => {
+            const result = results && results.find((r) => r.supplier === g.supplier.name);
+            const status = statusFor(g.supplier.name);
+            const replyStatus = status ? status.status : result && result.sent ? "sent" : "failed";
+            const badge =
+              replyStatus === "confirmed"
+                ? { text: "IN STOCK", bg: GREEN }
+                : replyStatus === "partial"
+                ? { text: "PARTIAL", bg: "#9F7400" }
+                : replyStatus === "unavailable"
+                ? { text: "UNAVAILABLE", bg: "#C0392B" }
+                : replyStatus === "failed"
+                ? { text: "SEND FAILED", bg: "#C0392B" }
+                : { text: "AWAITING REPLY", bg: AGGREGATE };
+            const isPartial = replyStatus === "partial";
+            return (
+              <div key={g.supplier.name} style={{ background: "#fff", border: `1.5px solid ${isPartial ? "#9F7400" : "#D8D3C6"}`, borderRadius: 6, padding: "14px 16px", marginBottom: 10 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 8 }}>
+                  <div>
+                    <p style={{ margin: 0, fontWeight: 700, fontSize: 14 }}>{g.supplier.name}</p>
+                    <p style={{ margin: "2px 0 0", fontSize: 12, color: AGGREGATE }}>{emails[g.supplier.name]}</p>
+                    {status && status.reply && status.reply.note && (
+                      <p style={{ margin: "6px 0 0", fontSize: 13, fontStyle: "italic", color: isPartial ? "#9F7400" : CHARCOAL, borderLeft: isPartial ? "3px solid #9F7400" : "none", paddingLeft: isPartial ? 8 : 0 }}>"{status.reply.note}"</p>
+                    )}
+                    {result && !result.sent && (
+                      <p style={{ margin: "6px 0 0", fontSize: 12, color: "#C0392B" }}>{result.reason}</p>
+                    )}
+                    {isPartial && (
+                      <button
+                        onClick={() => onResource && onResource({ supplierName: g.supplier.name, items: g.items, note: status && status.reply ? status.reply.note : "" })}
+                        style={{ marginTop: 10, padding: "7px 14px", borderRadius: 4, border: "1.5px solid #9F7400", background: "transparent", color: "#9F7400", fontWeight: 700, fontSize: 12, cursor: "pointer" }}
+                      >
+                        Re-source missing items →
+                      </button>
+                    )}
+                  </div>
+                  <span style={{ background: badge.bg, color: "#fff", fontSize: 11, fontWeight: 700, padding: "3px 9px", borderRadius: 3, letterSpacing: 0.4 }}>
+                    {badge.text}
+                  </span>
+                </div>
+              </div>
+            );
+          })}
+
+          <button
+            onClick={onAllConfirmed}
+            style={{
+              marginTop: 14,
+              padding: "12px 22px",
+              borderRadius: 4,
+              border: `1.5px solid ${CHARCOAL}`,
+              background: "transparent",
+              color: CHARCOAL,
+              fontWeight: 700,
+              fontSize: 13,
+              cursor: "pointer",
+              width: "100%",
+            }}
+          >
+            Continue to delivery tracking →
+          </button>
+          <p style={{ fontSize: 11, color: AGGREGATE, marginTop: 8, textAlign: "center" }}>
+            You don't have to wait for every reply — move on whenever you're ready.
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TrackingView({ order, inquiry, orderNumber, onBack }) {
+  const bySupplier = useMemo(() => {
+    const map = {};
+    order.items.forEach((it) => {
+      const key = it.chosen.name;
+      if (!map[key]) map[key] = { supplier: it.chosen, items: [] };
+      map[key].items.push(it);
+    });
+    return Object.values(map).map((g, i) => {
+      const rng = seedRandom(g.supplier.name.length * 13 + i * 7);
+      const progress = Math.min(3, Math.floor(rng() * 2) + (g.supplier.leadDays <= 3 ? 2 : 1));
+      return { ...g, progress, leadDays: g.supplier.leadDays };
+    });
+  }, [order]);
+
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8 }}>
+        <div>
+          <Docket>{orderNumber}</Docket>
+          <p style={{ margin: "10px 0 0", fontSize: 13, color: AGGREGATE }}>
+            {order.items.length} items across {bySupplier.length} suppliers · generated today
+          </p>
+          <p style={{ margin: "6px 0 0", fontSize: 12, color: AGGREGATE, maxWidth: 460 }}>
+            Call each merchant below to confirm price and place the order — tracking will update once you've
+            booked delivery with them.
+          </p>
+        </div>
+        <button onClick={onBack} style={ghostBtnStyle}>
+          ← New inquiry
+        </button>
+      </div>
+
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          background: "#fff",
+          border: "1.5px solid #D8D3C6",
+          borderRadius: 6,
+          padding: "16px 20px",
+          margin: "20px 0 28px",
+        }}
+      >
+        <div>
+          <p style={labelStyle}>Total order value</p>
+          <p style={{ margin: "4px 0 0", fontSize: 22, fontWeight: 700, fontFamily: "var(--font-mono, monospace)" }}>
+            £{order.total.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+          </p>
+        </div>
+        <div>
+          <p style={labelStyle}>Latest delivery due</p>
+          <p style={{ margin: "4px 0 0", fontSize: 22, fontWeight: 700 }}>{order.maxLead} days</p>
+        </div>
+        <div>
+          <p style={labelStyle}>Suppliers</p>
+          <p style={{ margin: "4px 0 0", fontSize: 22, fontWeight: 700 }}>{bySupplier.length}</p>
+        </div>
+      </div>
+
+      {inquiry && (
+        <div style={{ background: CARD, border: "1.5px solid #D8D3C6", borderRadius: 6, padding: "14px 18px", marginBottom: 28 }}>
+          <p style={labelStyle}>Deliver to</p>
+          <p style={{ margin: "4px 0 12px", fontSize: 14, fontWeight: 600 }}>{inquiry.address}</p>
+          {inquiry.access && inquiry.access.length > 0 && (
+            <>
+              <p style={labelStyle}>Access notes — read this to every supplier</p>
+              <ul style={{ margin: "6px 0 0", paddingLeft: 18 }}>
+                {inquiry.access.map((a) => {
+                  const label = ACCESS_OPTIONS.find(([id]) => id === a)?.[1] || a;
+                  return (
+                    <li key={a} style={{ fontSize: 13, marginBottom: 4 }}>
+                      <strong>{label}:</strong> {inquiry.accessDetails && inquiry.accessDetails[a]}
+                    </li>
+                  );
+                })}
+              </ul>
+            </>
+          )}
+        </div>
+      )}
+
+      <SectionLabel n="·">Delivery tracking</SectionLabel>
+
+
+      {bySupplier.map((g, i) => (
+        <div key={i} style={{ background: "#fff", border: "1.5px solid #D8D3C6", borderRadius: 6, padding: "16px 18px", marginBottom: 14 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 14, flexWrap: "wrap", gap: 8 }}>
+            <div>
+              <p style={{ margin: 0, fontWeight: 700, fontSize: 14 }}>{g.supplier.name}</p>
+              <p style={{ margin: "2px 0 0", fontSize: 12, color: AGGREGATE }}>{g.supplier.address}</p>
+              <p style={{ margin: "4px 0 0", fontSize: 12, color: AGGREGATE }}>
+                {g.items.length} item{g.items.length > 1 ? "s" : ""} ·{" "}
+                {g.items.map((it) => it.material).join(", ")}
+              </p>
+              <div style={{ display: "flex", gap: 14, marginTop: 8 }}>
+                <a href={telLink(g.supplier.phone)} style={{ fontSize: 12, fontWeight: 600, color: ORANGE, textDecoration: "none" }}>
+                  Call {g.supplier.phone}
+                </a>
+                <a
+                  href={mapsLink(g.supplier)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{ fontSize: 12, fontWeight: 600, color: CHARCOAL, textDecoration: "none", borderBottom: `1px dotted ${AGGREGATE}` }}
+                >
+                  View on map
+                </a>
+              </div>
+            </div>
+            <Docket>{g.progress === 3 ? "DELIVERED" : `ETA ${g.leadDays}D`}</Docket>
+          </div>
+
+          <div style={{ display: "flex", alignItems: "center" }}>
+            {TRACK_STAGES.map((stage, si) => (
+              <React.Fragment key={stage}>
+                <div style={{ display: "flex", flexDirection: "column", alignItems: "center", minWidth: 70 }}>
+                  <div
+                    style={{
+                      width: 14,
+                      height: 14,
+                      borderRadius: "50%",
+                      background: si <= g.progress ? GREEN : "#E2DDD0",
+                      border: si === g.progress ? `2.5px solid ${GREEN}` : "none",
+                    }}
+                  />
+                  <span
+                    style={{
+                      fontSize: 10.5,
+                      textAlign: "center",
+                      marginTop: 6,
+                      color: si <= g.progress ? CHARCOAL : "#B5B0A2",
+                      fontWeight: si === g.progress ? 700 : 500,
+                      lineHeight: 1.3,
+                    }}
+                  >
+                    {stage}
+                  </span>
+                </div>
+                {si < TRACK_STAGES.length - 1 && (
+                  <div style={{ flex: 1, height: 2, background: si < g.progress ? GREEN : "#E2DDD0", marginBottom: 18 }} />
+                )}
+              </React.Fragment>
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function OrderHistoryView({ onClose }) {
+  const [orders, setOrders] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [expanded, setExpanded] = useState(null);
+
+  React.useEffect(() => {
+    fetch(`${API_BASE_URL}/api/orders`)
+      .then((r) => r.json())
+      .then((data) => { setOrders(data.orders); setLoading(false); })
+      .catch(() => { setError("Could not load order history. Make sure the server is running."); setLoading(false); });
+  }, []);
+
+  const statusBadge = (status) => {
+    if (status === "confirmed")   return { text: "IN STOCK",      bg: GREEN };
+    if (status === "partial")     return { text: "PARTIAL",        bg: "#9F7400" };
+    if (status === "unavailable") return { text: "UNAVAILABLE",    bg: "#C0392B" };
+    if (status === "failed")      return { text: "SEND FAILED",    bg: "#C0392B" };
+    return                               { text: "AWAITING",       bg: AGGREGATE };
+  };
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(28,31,29,0.55)", zIndex: 100, display: "flex", alignItems: "flex-start", justifyContent: "flex-end" }}>
+      <div style={{ background: CREAM, width: "100%", maxWidth: 520, height: "100%", overflowY: "auto", padding: "28px 28px 60px", boxShadow: "-4px 0 24px rgba(0,0,0,0.15)" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 }}>
+          <h2 style={{ margin: 0, fontSize: 18, fontWeight: 800 }}>Order History</h2>
+          <button onClick={onClose} style={{ ...ghostBtnStyle, fontSize: 13 }}>✕ Close</button>
+        </div>
+
+        {loading && <p style={{ color: AGGREGATE, fontSize: 13 }}>Loading…</p>}
+        {error && <p style={{ color: "#C0392B", fontSize: 13 }}>{error}</p>}
+        {orders && orders.length === 0 && <p style={{ color: AGGREGATE, fontSize: 13 }}>No orders yet.</p>}
+
+        {orders && orders.map((order) => (
+          <div key={order.orderNumber} style={{ background: "#fff", border: "1.5px solid #D8D3C6", borderRadius: 6, marginBottom: 10, overflow: "hidden" }}>
+            <div
+              onClick={() => setExpanded(expanded === order.orderNumber ? null : order.orderNumber)}
+              style={{ padding: "14px 16px", cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center" }}
+            >
+              <div>
+                <p style={{ margin: 0, fontWeight: 700, fontSize: 14 }}>{order.orderNumber}</p>
+                <p style={{ margin: "2px 0 0", fontSize: 12, color: AGGREGATE }}>
+                  {new Date(order.createdAt).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })} · {order.repliedCount}/{order.totalSuppliers} replied
+                </p>
+                <p style={{ margin: "2px 0 0", fontSize: 12, color: AGGREGATE }}>{order.deliveryAddress}</p>
+              </div>
+              <span style={{ fontSize: 12, color: AGGREGATE }}>{expanded === order.orderNumber ? "▲" : "▼"}</span>
+            </div>
+
+            {expanded === order.orderNumber && (
+              <div style={{ borderTop: "1px solid #D8D3C6", padding: "12px 16px" }}>
+                {Object.values(order.suppliers).map((sup) => {
+                  const badge = statusBadge(sup.status);
+                  return (
+                    <div key={sup.supplierName + sup.sentAt} style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", padding: "8px 0", borderBottom: "1px solid #F0EDE8" }}>
+                      <div>
+                        <p style={{ margin: 0, fontWeight: 600, fontSize: 13 }}>{sup.supplierName}</p>
+                        <p style={{ margin: "2px 0 0", fontSize: 11, color: AGGREGATE }}>{sup.items.map((it) => `${it.material} ×${it.qty}`).join(", ")}</p>
+                        {sup.reply && sup.reply.note && (
+                          <p style={{ margin: "4px 0 0", fontSize: 11, fontStyle: "italic", color: AGGREGATE }}>"{sup.reply.note}"</p>
+                        )}
+                      </div>
+                      <span style={{ background: badge.bg, color: "#fff", fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 3, letterSpacing: 0.4, whiteSpace: "nowrap", marginLeft: 10 }}>
+                        {badge.text}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function App() {
+  const [step, setStep] = useState(0);
+  const [inquiry, setInquiry] = useState(null);
+  const [quotes, setQuotes] = useState(null);
+  const [bundles, setBundles] = useState(null);
+  const [order, setOrder] = useState(null);
+  const [orderNumber, setOrderNumber] = useState(null);
+  const [builderEmail, setBuilderEmail] = useState("");
+  const [showHistory, setShowHistory] = useState(false);
+  const [resourcingItems, setResourcingItems] = useState(null);
+  const [resourcingFrom, setResourcingFrom] = useState("");
+  const [resourcingNote, setResourcingNote] = useState("");
+
+  const handleInquirySubmit = (data) => {
+    const q = generateQuotes(data.materials, data.scale, data.timeframe, data.buffer);
+    setInquiry(data);
+    setQuotes(q);
+    setBundles(buildBundles(q, data.timeframe));
+    setResourcingItems(null);
+    setResourcingFrom("");
+    setResourcingNote("");
+    setStep(1);
+  };
+
+  const handleSelectBundle = (b) => {
+    setOrder(b);
+    setOrderNumber("ORD-" + Math.floor(100000 + Math.random() * 900000));
+    setStep(2);
+  };
+
+  const handleResource = ({ supplierName, items, note }) => {
+    setResourcingItems(items);
+    setResourcingFrom(supplierName);
+    setResourcingNote(note || "");
+    setStep(0);
+  };
+
+  const reset = () => {
+    setStep(0);
+    setInquiry(null);
+    setQuotes(null);
+    setBundles(null);
+    setOrder(null);
+    setOrderNumber(null);
+    setResourcingItems(null);
+    setResourcingFrom("");
+    setResourcingNote("");
+  };
+
+  return (
+    <div style={{ fontFamily: "var(--font-sans, sans-serif)", background: CREAM, minHeight: "100vh", color: CHARCOAL }}>
+      <div style={{ background: CHARCOAL, padding: "18px 0" }}>
+        <div style={{ maxWidth: 880, margin: "0 auto", padding: "0 24px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <div style={{ width: 28, height: 28, background: ORANGE, borderRadius: 4, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 14, color: CHARCOAL }}>
+              M
+            </div>
+            <span style={{ color: CREAM, fontWeight: 700, fontSize: 16, letterSpacing: 0.3 }}>MaterialOrder</span>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+            <button onClick={() => setShowHistory(true)} style={{ ...ghostBtnStyle, color: "#8A8579", borderColor: "#8A8579", fontSize: 12 }}>
+              Order history
+            </button>
+            <span style={{ color: "#8A8579", fontSize: 12, fontFamily: "var(--font-mono, monospace)" }}>
+              BUILD PROCUREMENT
+            </span>
+          </div>
+        </div>
+      </div>
+
+      {showHistory && <OrderHistoryView onClose={() => setShowHistory(false)} />}
+
+      <div style={{ maxWidth: 880, margin: "0 auto", padding: "32px 24px 80px" }}>
+        <Stepper step={step} />
+        {step === 0 && (
+          <InquiryForm
+            onSubmit={handleInquirySubmit}
+            prefillItems={resourcingItems}
+            resourcingFrom={resourcingFrom}
+            resourcingNote={resourcingNote}
+          />
+        )}
+        {step === 1 && inquiry && (
+          <BundleView inquiry={inquiry} quotes={quotes} bundles={bundles} onSelect={handleSelectBundle} onBack={() => setStep(0)} />
+        )}
+        {step === 2 && order && (
+          <StockCheckView
+            order={order}
+            inquiry={inquiry}
+            orderNumber={orderNumber}
+            onAllConfirmed={() => setStep(3)}
+            onBack={() => setStep(1)}
+            onResource={handleResource}
+            builderEmail={builderEmail}
+            onBuilderEmailChange={setBuilderEmail}
+          />
+        )}
+        {step === 3 && order && <TrackingView order={order} inquiry={inquiry} orderNumber={orderNumber} onBack={reset} />}
+      </div>
+    </div>
+  );
+}
+
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(<App />);
+</script>
+</body>
+</html>
