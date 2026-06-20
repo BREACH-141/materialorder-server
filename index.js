@@ -132,6 +132,7 @@ app.get("/api/orders", (req, res) => {
     const repliedCount = supplierEntries.filter((s) => s.status !== "sent").length;
     return {
       orderNumber: order.orderNumber,
+      projectName: order.projectName || "",
       createdAt: order.createdAt,
       deliveryAddress: order.deliveryAddress,
       timeframe: order.timeframe,
@@ -151,7 +152,7 @@ app.post("/api/stock-check", async (req, res) => {
     return res.status(500).json({ error: "Email is not configured on this server. Set RESEND_API_KEY in .env." });
   }
 
-  const { orderNumber, deliveryAddress, timeframe, suppliers, builderEmail } = req.body || {};
+  const { orderNumber, deliveryAddress, timeframe, suppliers, builderEmail, projectName } = req.body || {};
   if (!orderNumber || !Array.isArray(suppliers) || suppliers.length === 0) {
     return res.status(400).json({ error: "orderNumber and a non-empty suppliers array are required." });
   }
@@ -159,6 +160,7 @@ app.post("/api/stock-check", async (req, res) => {
   const store = readStore();
   const order = store.orders[orderNumber] || {
     orderNumber,
+    projectName: projectName || "",
     deliveryAddress,
     timeframe,
     builderEmail: builderEmail || "",

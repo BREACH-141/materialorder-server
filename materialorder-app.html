@@ -21,7 +21,7 @@
 <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
 <script type="text/babel">
-const { useState, useMemo } = React;
+const { useState, useMemo, useEffect } = React;
 
 // Where the MaterialOrder backend (server/index.js) is reachable. Change this
 // to your deployed server's URL once it's hosted somewhere reachable from the
@@ -1145,7 +1145,7 @@ function groupOrderBySupplier(order) {
   return Object.values(map);
 }
 
-function StockCheckView({ order, inquiry, orderNumber, onAllConfirmed, onBack, onResource, builderEmail, onBuilderEmailChange }) {
+function StockCheckView({ order, inquiry, orderNumber, onAllConfirmed, onBack, onResource, builderEmail, onBuilderEmailChange, projectName, onProjectNameChange, onBackToDashboard }) {
   const groups = useMemo(() => groupOrderBySupplier(order), [order]);
   const [emails, setEmails] = useState(() => Object.fromEntries(groups.map((g) => [g.supplier.name, g.supplier.email || ""])));
   const [sendState, setSendState] = useState("idle"); // idle | sending | sent | error
@@ -1168,6 +1168,7 @@ function StockCheckView({ order, inquiry, orderNumber, onAllConfirmed, onBack, o
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           orderNumber,
+          projectName,
           deliveryAddress: inquiry.address,
           timeframe: inquiry.timeframe,
           builderEmail,
@@ -1236,6 +1237,17 @@ function StockCheckView({ order, inquiry, orderNumber, onAllConfirmed, onBack, o
 
       {sendState !== "sent" && (
         <div style={{ marginTop: 24 }}>
+          <SectionLabel n="·">Project name</SectionLabel>
+          <p style={{ fontSize: 12, color: AGGREGATE, marginTop: -8, marginBottom: 10, maxWidth: 520 }}>
+            Give this enquiry a name so you can find it easily on the dashboard.
+          </p>
+          <input
+            type="text"
+            value={projectName}
+            onChange={(e) => onProjectNameChange(e.target.value)}
+            placeholder="e.g. Loft conversion — 47 Maple St"
+            style={{ ...inputStyle, marginBottom: 20, maxWidth: 400 }}
+          />
           <SectionLabel n="·">Your email address</SectionLabel>
           <p style={{ fontSize: 12, color: AGGREGATE, marginTop: -8, marginBottom: 10, maxWidth: 520 }}>
             We'll email you as soon as each supplier replies — no need to keep this page open.
@@ -1361,23 +1373,40 @@ function StockCheckView({ order, inquiry, orderNumber, onAllConfirmed, onBack, o
             );
           })}
 
-          <button
-            onClick={onAllConfirmed}
-            style={{
-              marginTop: 14,
-              padding: "12px 22px",
-              borderRadius: 4,
-              border: `1.5px solid ${CHARCOAL}`,
-              background: "transparent",
-              color: CHARCOAL,
-              fontWeight: 700,
-              fontSize: 13,
-              cursor: "pointer",
-              width: "100%",
-            }}
-          >
-            Continue to delivery tracking →
-          </button>
+          <div style={{ display: "flex", gap: 10, marginTop: 14, flexWrap: "wrap" }}>
+            <button
+              onClick={onAllConfirmed}
+              style={{
+                flex: "1 1 200px",
+                padding: "12px 22px",
+                borderRadius: 4,
+                border: `1.5px solid ${CHARCOAL}`,
+                background: "transparent",
+                color: CHARCOAL,
+                fontWeight: 700,
+                fontSize: 13,
+                cursor: "pointer",
+              }}
+            >
+              Continue to delivery tracking →
+            </button>
+            <button
+              onClick={onBackToDashboard}
+              style={{
+                flex: "0 0 auto",
+                padding: "12px 22px",
+                borderRadius: 4,
+                border: `1.5px solid #D8D3C6`,
+                background: "transparent",
+                color: AGGREGATE,
+                fontWeight: 600,
+                fontSize: 13,
+                cursor: "pointer",
+              }}
+            >
+              ← Back to dashboard
+            </button>
+          </div>
           <p style={{ fontSize: 11, color: AGGREGATE, marginTop: 8, textAlign: "center" }}>
             You don't have to wait for every reply — move on whenever you're ready.
           </p>
@@ -1537,84 +1566,215 @@ function TrackingView({ order, inquiry, orderNumber, onBack }) {
   );
 }
 
-function OrderHistoryView({ onClose }) {
+function Dashboard({ onNewProject, onSelectProject }) {
   const [orders, setOrders] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [expanded, setExpanded] = useState(null);
 
-  React.useEffect(() => {
+  useEffect(() => {
     fetch(`${API_BASE_URL}/api/orders`)
       .then((r) => r.json())
       .then((data) => { setOrders(data.orders); setLoading(false); })
-      .catch(() => { setError("Could not load order history. Make sure the server is running."); setLoading(false); });
+      .catch(() => { setError("Could not load projects. Make sure the server is running."); setLoading(false); });
   }, []);
 
+  const projectStatusInfo = (order) => {
+    const sups = Object.values(order.suppliers || {});
+    const total = sups.length;
+    if (total === 0) return { text: "AWAITING", bg: AGGREGATE };
+    const replied = sups.filter((s) => s.status !== "sent");
+    const confirmed = sups.filter((s) => s.status === "confirmed");
+    const unavailable = sups.filter((s) => s.status === "unavailable");
+    const partial = sups.filter((s) => s.status === "partial");
+    if (replied.length === 0) return { text: "AWAITING", bg: AGGREGATE };
+    if (unavailable.length > 0 || partial.length > 0) {
+      if (confirmed.length > 0) return { text: "PARTIAL", bg: "#9F7400" };
+      return { text: "SOME UNAVAILABLE", bg: "#C0392B" };
+    }
+    if (confirmed.length === total) return { text: "ALL CONFIRMED", bg: GREEN };
+    return { text: "AWAITING", bg: AGGREGATE };
+  };
+
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 28 }}>
+        <div>
+          <h2 style={{ margin: 0, fontSize: 22, fontWeight: 800, color: CHARCOAL }}>Projects</h2>
+          <p style={{ margin: "4px 0 0", fontSize: 13, color: AGGREGATE }}>Each stock-check enquiry is a project. Click one to see supplier replies.</p>
+        </div>
+        <button
+          onClick={onNewProject}
+          style={{
+            padding: "10px 20px",
+            borderRadius: 4,
+            border: "none",
+            background: ORANGE,
+            color: CREAM,
+            fontWeight: 700,
+            fontSize: 13,
+            cursor: "pointer",
+            letterSpacing: 0.3,
+          }}
+        >
+          New project +
+        </button>
+      </div>
+
+      {loading && <p style={{ color: AGGREGATE, fontSize: 13 }}>Loading projects…</p>}
+      {error && <p style={{ color: "#C0392B", fontSize: 13 }}>{error}</p>}
+
+      {orders && orders.length === 0 && (
+        <div style={{ textAlign: "center", padding: "60px 24px", background: "#fff", border: "1.5px solid #D8D3C6", borderRadius: 6 }}>
+          <p style={{ fontSize: 15, color: AGGREGATE, marginBottom: 20 }}>No projects yet. Start your first one.</p>
+          <button
+            onClick={onNewProject}
+            style={{
+              padding: "11px 24px",
+              borderRadius: 4,
+              border: "none",
+              background: CHARCOAL,
+              color: CREAM,
+              fontWeight: 700,
+              fontSize: 14,
+              cursor: "pointer",
+            }}
+          >
+            Start your first project →
+          </button>
+        </div>
+      )}
+
+      {orders && orders.length > 0 && (
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 14 }}>
+          {orders.map((order) => {
+            const pill = projectStatusInfo(order);
+            const displayName = order.projectName || order.orderNumber;
+            const date = new Date(order.createdAt).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+            return (
+              <div
+                key={order.orderNumber}
+                onClick={() => onSelectProject(order)}
+                style={{
+                  width: 280,
+                  background: "#fff",
+                  border: "1.5px solid #D8D3C6",
+                  borderRadius: 6,
+                  padding: "16px 18px",
+                  cursor: "pointer",
+                  transition: "border-color 0.12s",
+                  flexShrink: 0,
+                }}
+                onMouseEnter={(e) => e.currentTarget.style.borderColor = ORANGE}
+                onMouseLeave={(e) => e.currentTarget.style.borderColor = "#D8D3C6"}
+              >
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 10 }}>
+                  <p style={{ margin: 0, fontWeight: 700, fontSize: 14, color: CHARCOAL, flex: 1, paddingRight: 8 }}>{displayName}</p>
+                  <span style={{ background: pill.bg, color: "#fff", fontSize: 10, fontWeight: 700, padding: "2px 7px", borderRadius: 3, letterSpacing: 0.4, whiteSpace: "nowrap", flexShrink: 0 }}>
+                    {pill.text}
+                  </span>
+                </div>
+                {order.projectName && (
+                  <p style={{ margin: "0 0 6px", fontSize: 11, color: AGGREGATE, fontFamily: "var(--font-mono, monospace)" }}>{order.orderNumber}</p>
+                )}
+                <p style={{ margin: "0 0 4px", fontSize: 12, color: AGGREGATE }}>{order.deliveryAddress}</p>
+                <p style={{ margin: "0 0 10px", fontSize: 12, color: AGGREGATE }}>{date}</p>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 12, borderTop: "1px solid #EEEAE0", paddingTop: 10, marginTop: 4 }}>
+                  <span style={{ color: AGGREGATE }}>{order.totalSuppliers} supplier{order.totalSuppliers !== 1 ? "s" : ""}</span>
+                  <span style={{ color: order.repliedCount === order.totalSuppliers && order.totalSuppliers > 0 ? GREEN : AGGREGATE, fontWeight: 600 }}>
+                    {order.repliedCount}/{order.totalSuppliers} replied
+                  </span>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ProjectDetailView({ project, onBack, onResource }) {
   const statusBadge = (status) => {
     if (status === "confirmed")   return { text: "IN STOCK",      bg: GREEN };
     if (status === "partial")     return { text: "PARTIAL",        bg: "#9F7400" };
     if (status === "unavailable") return { text: "UNAVAILABLE",    bg: "#C0392B" };
     if (status === "failed")      return { text: "SEND FAILED",    bg: "#C0392B" };
-    return                               { text: "AWAITING",       bg: AGGREGATE };
+    return                               { text: "AWAITING REPLY", bg: AGGREGATE };
   };
 
+  const suppliers = Object.values(project.suppliers || {});
+  const displayName = project.projectName || project.orderNumber;
+  const date = new Date(project.createdAt).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+
   return (
-    <div style={{ position: "fixed", inset: 0, background: "rgba(28,31,29,0.55)", zIndex: 100, display: "flex", alignItems: "flex-start", justifyContent: "flex-end" }}>
-      <div style={{ background: CREAM, width: "100%", maxWidth: 520, height: "100%", overflowY: "auto", padding: "28px 28px 60px", boxShadow: "-4px 0 24px rgba(0,0,0,0.15)" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 }}>
-          <h2 style={{ margin: 0, fontSize: 18, fontWeight: 800 }}>Order History</h2>
-          <button onClick={onClose} style={{ ...ghostBtnStyle, fontSize: 13 }}>✕ Close</button>
-        </div>
+    <div>
+      <button onClick={onBack} style={{ ...ghostBtnStyle, marginBottom: 20 }}>
+        ← Back to dashboard
+      </button>
 
-        {loading && <p style={{ color: AGGREGATE, fontSize: 13 }}>Loading…</p>}
-        {error && <p style={{ color: "#C0392B", fontSize: 13 }}>{error}</p>}
-        {orders && orders.length === 0 && <p style={{ color: AGGREGATE, fontSize: 13 }}>No orders yet.</p>}
-
-        {orders && orders.map((order) => (
-          <div key={order.orderNumber} style={{ background: "#fff", border: "1.5px solid #D8D3C6", borderRadius: 6, marginBottom: 10, overflow: "hidden" }}>
-            <div
-              onClick={() => setExpanded(expanded === order.orderNumber ? null : order.orderNumber)}
-              style={{ padding: "14px 16px", cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center" }}
-            >
-              <div>
-                <p style={{ margin: 0, fontWeight: 700, fontSize: 14 }}>{order.orderNumber}</p>
-                <p style={{ margin: "2px 0 0", fontSize: 12, color: AGGREGATE }}>
-                  {new Date(order.createdAt).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })} · {order.repliedCount}/{order.totalSuppliers} replied
-                </p>
-                <p style={{ margin: "2px 0 0", fontSize: 12, color: AGGREGATE }}>{order.deliveryAddress}</p>
-              </div>
-              <span style={{ fontSize: 12, color: AGGREGATE }}>{expanded === order.orderNumber ? "▲" : "▼"}</span>
-            </div>
-
-            {expanded === order.orderNumber && (
-              <div style={{ borderTop: "1px solid #D8D3C6", padding: "12px 16px" }}>
-                {Object.values(order.suppliers).map((sup) => {
-                  const badge = statusBadge(sup.status);
-                  return (
-                    <div key={sup.supplierName + sup.sentAt} style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", padding: "8px 0", borderBottom: "1px solid #F0EDE8" }}>
-                      <div>
-                        <p style={{ margin: 0, fontWeight: 600, fontSize: 13 }}>{sup.supplierName}</p>
-                        <p style={{ margin: "2px 0 0", fontSize: 11, color: AGGREGATE }}>{sup.items.map((it) => `${it.material} ×${it.qty}`).join(", ")}</p>
-                        {sup.reply && sup.reply.note && (
-                          <p style={{ margin: "4px 0 0", fontSize: 11, fontStyle: "italic", color: AGGREGATE }}>"{sup.reply.note}"</p>
-                        )}
-                      </div>
-                      <span style={{ background: badge.bg, color: "#fff", fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 3, letterSpacing: 0.4, whiteSpace: "nowrap", marginLeft: 10 }}>
-                        {badge.text}
-                      </span>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        ))}
+      <div style={{ marginBottom: 24 }}>
+        <h2 style={{ margin: "0 0 4px", fontSize: 22, fontWeight: 800, color: CHARCOAL }}>{displayName}</h2>
+        {project.projectName && (
+          <Docket>{project.orderNumber}</Docket>
+        )}
+        <p style={{ margin: "10px 0 2px", fontSize: 13, color: AGGREGATE }}>
+          <strong style={{ color: CHARCOAL }}>Delivery:</strong> {project.deliveryAddress}
+        </p>
+        <p style={{ margin: "2px 0", fontSize: 13, color: AGGREGATE }}>
+          <strong style={{ color: CHARCOAL }}>Timeframe:</strong> {project.timeframe} &nbsp;·&nbsp; {date}
+        </p>
+        <p style={{ margin: "2px 0", fontSize: 13, color: AGGREGATE }}>
+          {project.repliedCount}/{project.totalSuppliers} supplier{project.totalSuppliers !== 1 ? "s" : ""} replied
+        </p>
       </div>
+
+      <SectionLabel n="·">Supplier replies</SectionLabel>
+
+      {suppliers.length === 0 && (
+        <p style={{ fontSize: 13, color: AGGREGATE }}>No supplier data on record for this project.</p>
+      )}
+
+      {suppliers.map((sup) => {
+        const badge = statusBadge(sup.status);
+        const isPartial = sup.status === "partial";
+        const borderColor = sup.status === "confirmed" ? GREEN : sup.status === "partial" ? "#9F7400" : sup.status === "unavailable" ? "#C0392B" : "#D8D3C6";
+        return (
+          <div key={sup.supplierName + sup.sentAt} style={{ background: "#fff", border: `1.5px solid ${borderColor}`, borderRadius: 6, padding: "14px 16px", marginBottom: 10 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 8 }}>
+              <div style={{ flex: 1 }}>
+                <p style={{ margin: 0, fontWeight: 700, fontSize: 14 }}>{sup.supplierName}</p>
+                <p style={{ margin: "2px 0 6px", fontSize: 12, color: AGGREGATE }}>
+                  {(sup.items || []).map((it) => `${it.material} ×${it.qty}`).join(", ")}
+                </p>
+                {sup.reply && sup.reply.note && (
+                  <p style={{ margin: "6px 0 0", fontSize: 13, fontStyle: "italic", color: isPartial ? "#9F7400" : CHARCOAL, borderLeft: isPartial ? "3px solid #9F7400" : "none", paddingLeft: isPartial ? 8 : 0 }}>
+                    "{sup.reply.note}"
+                  </p>
+                )}
+                {isPartial && onResource && (
+                  <button
+                    onClick={() => onResource({ supplierName: sup.supplierName, items: sup.items || [], note: sup.reply ? sup.reply.note : "" })}
+                    style={{ marginTop: 10, padding: "7px 14px", borderRadius: 4, border: "1.5px solid #9F7400", background: "transparent", color: "#9F7400", fontWeight: 700, fontSize: 12, cursor: "pointer" }}
+                  >
+                    Re-source missing items →
+                  </button>
+                )}
+              </div>
+              <span style={{ background: badge.bg, color: "#fff", fontSize: 11, fontWeight: 700, padding: "3px 9px", borderRadius: 3, letterSpacing: 0.4, whiteSpace: "nowrap" }}>
+                {badge.text}
+              </span>
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 }
 
+
 function App() {
+  // view: "dashboard" | "new-project" | "project-detail"
+  const [view, setView] = useState("dashboard");
   const [step, setStep] = useState(0);
   const [inquiry, setInquiry] = useState(null);
   const [quotes, setQuotes] = useState(null);
@@ -1622,7 +1782,8 @@ function App() {
   const [order, setOrder] = useState(null);
   const [orderNumber, setOrderNumber] = useState(null);
   const [builderEmail, setBuilderEmail] = useState("");
-  const [showHistory, setShowHistory] = useState(false);
+  const [projectName, setProjectName] = useState("");
+  const [selectedProject, setSelectedProject] = useState(null);
   const [resourcingItems, setResourcingItems] = useState(null);
   const [resourcingFrom, setResourcingFrom] = useState("");
   const [resourcingNote, setResourcingNote] = useState("");
@@ -1649,69 +1810,120 @@ function App() {
     setResourcingFrom(supplierName);
     setResourcingNote(note || "");
     setStep(0);
+    setView("new-project");
   };
 
-  const reset = () => {
+  const resetToNewProject = () => {
     setStep(0);
     setInquiry(null);
     setQuotes(null);
     setBundles(null);
     setOrder(null);
     setOrderNumber(null);
+    setProjectName("");
     setResourcingItems(null);
     setResourcingFrom("");
     setResourcingNote("");
+    setView("new-project");
+  };
+
+  const goToDashboard = () => {
+    setStep(0);
+    setInquiry(null);
+    setQuotes(null);
+    setBundles(null);
+    setOrder(null);
+    setOrderNumber(null);
+    setProjectName("");
+    setResourcingItems(null);
+    setResourcingFrom("");
+    setResourcingNote("");
+    setSelectedProject(null);
+    setView("dashboard");
+  };
+
+  const handleSelectProject = (project) => {
+    setSelectedProject(project);
+    setView("project-detail");
+  };
+
+  const handleResourceFromDetail = ({ supplierName, items, note }) => {
+    setResourcingItems(items);
+    setResourcingFrom(supplierName);
+    setResourcingNote(note || "");
+    setStep(0);
+    setView("new-project");
   };
 
   return (
     <div style={{ fontFamily: "var(--font-sans, sans-serif)", background: CREAM, minHeight: "100vh", color: CHARCOAL }}>
       <div style={{ background: CHARCOAL, padding: "18px 0" }}>
         <div style={{ maxWidth: 880, margin: "0 auto", padding: "0 24px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <div
+            onClick={goToDashboard}
+            style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer" }}
+          >
             <div style={{ width: 28, height: 28, background: ORANGE, borderRadius: 4, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 14, color: CHARCOAL }}>
               M
             </div>
             <span style={{ color: CREAM, fontWeight: 700, fontSize: 16, letterSpacing: 0.3 }}>MaterialOrder</span>
           </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-            <button onClick={() => setShowHistory(true)} style={{ ...ghostBtnStyle, color: "#8A8579", borderColor: "#8A8579", fontSize: 12 }}>
-              Order history
-            </button>
-            <span style={{ color: "#8A8579", fontSize: 12, fontFamily: "var(--font-mono, monospace)" }}>
-              BUILD PROCUREMENT
-            </span>
-          </div>
+          <span style={{ color: "#8A8579", fontSize: 12, fontFamily: "var(--font-mono, monospace)" }}>
+            BUILD PROCUREMENT
+          </span>
         </div>
       </div>
 
-      {showHistory && <OrderHistoryView onClose={() => setShowHistory(false)} />}
-
       <div style={{ maxWidth: 880, margin: "0 auto", padding: "32px 24px 80px" }}>
-        <Stepper step={step} />
-        {step === 0 && (
-          <InquiryForm
-            onSubmit={handleInquirySubmit}
-            prefillItems={resourcingItems}
-            resourcingFrom={resourcingFrom}
-            resourcingNote={resourcingNote}
+        {view === "dashboard" && (
+          <Dashboard
+            onNewProject={resetToNewProject}
+            onSelectProject={handleSelectProject}
           />
         )}
-        {step === 1 && inquiry && (
-          <BundleView inquiry={inquiry} quotes={quotes} bundles={bundles} onSelect={handleSelectBundle} onBack={() => setStep(0)} />
-        )}
-        {step === 2 && order && (
-          <StockCheckView
-            order={order}
-            inquiry={inquiry}
-            orderNumber={orderNumber}
-            onAllConfirmed={() => setStep(3)}
-            onBack={() => setStep(1)}
-            onResource={handleResource}
-            builderEmail={builderEmail}
-            onBuilderEmailChange={setBuilderEmail}
+
+        {view === "project-detail" && selectedProject && (
+          <ProjectDetailView
+            project={selectedProject}
+            onBack={() => setView("dashboard")}
+            onResource={handleResourceFromDetail}
           />
         )}
-        {step === 3 && order && <TrackingView order={order} inquiry={inquiry} orderNumber={orderNumber} onBack={reset} />}
+
+        {view === "new-project" && (
+          <>
+            <Stepper step={step} />
+            {step === 0 && (
+              <InquiryForm
+                onSubmit={handleInquirySubmit}
+                prefillItems={resourcingItems}
+                resourcingFrom={resourcingFrom}
+                resourcingNote={resourcingNote}
+              />
+            )}
+            {step === 1 && inquiry && (
+              <BundleView inquiry={inquiry} quotes={quotes} bundles={bundles} onSelect={handleSelectBundle} onBack={() => setStep(0)} />
+            )}
+            {step === 2 && order && (
+              <StockCheckView
+                order={order}
+                inquiry={inquiry}
+                orderNumber={orderNumber}
+                onAllConfirmed={() => setStep(3)}
+                onBack={() => setStep(1)}
+                onResource={handleResource}
+                builderEmail={builderEmail}
+                onBuilderEmailChange={setBuilderEmail}
+                projectName={projectName}
+                onProjectNameChange={setProjectName}
+                onBackToDashboard={goToDashboard}
+              />
+            )}
+            {step === 3 && order && (
+              <TrackingView order={order} inquiry={inquiry} orderNumber={orderNumber} onBack={goToDashboard} />
+            )}
+          </>
+        )}
       </div>
     </div>
   );
